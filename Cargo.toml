@@ -10,3 +10,7 @@ serde_json = "1"
 # Used for threads
 crossbeam = "0.8"
 anyhow = "1"
+
+[[bin]]
+name = "ensure-nested"
+path = "src/main/ensure_nested.rs"
