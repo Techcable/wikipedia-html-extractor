@@ -1,6 +1,7 @@
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 pub fn main() {
     let mut args = std::env::args().skip(1);
@@ -23,15 +24,17 @@ pub fn main() {
         Ok(iter) => iter,
     };
     let counter = Arc::new(AtomicU64::new(0));
+    let existing_dirs = Arc::new(Mutex::new(HashSet::<PathBuf>::new()));
     let (sender, receiver) = crossbeam::channel::bounded::<PathBuf>(500);
     let mut handles = Vec::new();
     for _ in 0..15 {
         let target_dir = PathBuf::clone(&target_dir);
         let counter = Arc::clone(&counter);
         let receiver = receiver.clone();
+        let existing_dirs = existing_dirs.clone();
         handles.push(std::thread::spawn(move || {
             while let Ok(target) = receiver.recv() {
-                process_file(&*counter, &*target_dir, &*target);
+                process_file(&*counter, &*target_dir, &*existing_dirs, &*target);
             }
             drop(receiver);
         }));
@@ -67,7 +70,12 @@ pub fn main() {
     }
 }
 
-fn process_file(i: &AtomicU64, target_dir: &Path, original_path: &Path) {
+fn process_file(
+    i: &AtomicU64,
+    target_dir: &Path,
+    existing_dirs: &Mutex<HashSet<PathBuf>>,
+    original_path: &Path,
+) {
     let name = match original_path.file_name() {
         Some(stem) => stem.to_string_lossy().into_owned(),
         None => {
@@ -83,15 +91,25 @@ fn process_file(i: &AtomicU64, target_dir: &Path, original_path: &Path) {
             target_file.push(String::from(second));
         }
     }
-    match std::fs::create_dir_all(&target_file) {
-        Ok(()) => {}
-        Err(e) => {
-            eprintln!(
-                "WARNING: Unable to create directory {}: {}",
-                target_file.display(),
-                e
-            );
-            return;
+    let exists = {
+        let lock = existing_dirs.lock().unwrap();
+        lock.contains(&target_file)
+    };
+    if !exists {
+        match std::fs::create_dir_all(&target_file) {
+            Ok(()) => {
+                let mut lock = existing_dirs.lock().unwrap();
+                lock.insert(target_file.clone());
+                drop(lock)
+            }
+            Err(e) => {
+                eprintln!(
+                    "WARNING: Unable to create directory {}: {}",
+                    target_file.display(),
+                    e
+                );
+                return;
+            }
         }
     }
     target_file.push(name);
