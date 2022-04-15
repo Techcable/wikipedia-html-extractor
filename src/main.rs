@@ -26,11 +26,16 @@ pub fn main() -> anyhow::Result<()> {
     }
     let mut paths = Vec::new();
     let mut skip_existing = false;
+    let mut verbose = false;
     for arg in env::args().skip(1) {
         if arg.starts_with("--") {
             match &*arg {
                 "--skip-existing" => {
                     skip_existing = true;
+                    continue;
+                }
+                "--verbose" => {
+                    verbose = true;
                     continue;
                 }
                 _ => {
@@ -92,13 +97,13 @@ pub fn main() -> anyhow::Result<()> {
                                     let i = count.fetch_add(1, Ordering::SeqCst);
                                     if i % 100 == 0 {
                                         eprintln!("Processed {} files", i);
-                                        if i % 500 == 0 {
-                                            eprintln!(
-                                                "Just did {:?} to {}",
-                                                article.name,
-                                                target_file.display()
-                                            );
-                                        }
+                                    }
+                                    if i % 500 == 0 || verbose {
+                                        eprintln!(
+                                            "Extracted {:?} to {}",
+                                            article.name,
+                                            target_file.display()
+                                        );
                                     }
                                 }
                                 Err(e) => {
