@@ -78,13 +78,28 @@ pub fn main() -> anyhow::Result<()> {
                                     eprintln!("WARNING: {}", msg);
                                     continue 'streamLoop;
                                 }
-                                Ok(name) => name,
+                                Ok(name) => sanitize_name(&*name),
                             };
-                            let target_file = target_dir.join(
-                                name.replace("/", "__")
-                                    .replace(":", "__colon__")
-                                    .replace("*", "__star__"),
-                            );
+                            let mut target_file = PathBuf::clone(&target_dir);
+                            let mut chars = name.chars();
+                            if let Some(first) = chars.next() {
+                                target_file.push(String::from(first));
+                                if let Some(second) = chars.next() {
+                                    target_file.push(String::from(second));
+                                }
+                            }
+                            match std::fs::create_dir_all(&target_file) {
+                                Ok(()) => {}
+                                Err(e) => {
+                                    eprintln!(
+                                        "WARNING: Unable to create directory {}: {}",
+                                        target_file.display(),
+                                        e
+                                    );
+                                    continue 'streamLoop;
+                                }
+                            }
+                            target_file.push(name);
                             if skip_existing && target_file.is_file() {
                                 let i = skipped.fetch_add(1, Ordering::SeqCst);
                                 if i % 500 == 0 {
@@ -135,4 +150,10 @@ fn parse_url(url: &str) -> Result<String, String> {
         None => Err(format!("No `/wiki/` in {:?}", url)),
         Some(idx) => Ok(format!("{}.html", &url[idx + PREFIX.len()..])),
     }
+}
+
+pub fn sanitize_name(name: &str) -> String {
+    name.replace("/", "__")
+        .replace(":", "__colon__")
+        .replace("*", "__star__")
 }
