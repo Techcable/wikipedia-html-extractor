@@ -4,7 +4,7 @@ use std::env;
 use std::fs::File;
 use std::io::BufReader;
 use std::path::PathBuf;
-use std::sync::atomic::{Ordering, AtomicU64};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 #[derive(Debug, Deserialize)]
 struct ArticleEntry {
@@ -25,7 +25,20 @@ pub fn main() -> anyhow::Result<()> {
         std::fs::create_dir(&target_dir)?;
     }
     let mut paths = Vec::new();
+    let mut skip_existing = false;
     for arg in env::args().skip(1) {
+        if arg.starts_with("--") {
+            match &*arg {
+                "--skip-existing" => {
+                    skip_existing = true;
+                    continue;
+                }
+                _ => {
+                    eprintln!("Unknown option: {:?}", arg);
+                    std::process::exit(1);
+                }
+            }
+        }
         let p = PathBuf::from(arg);
         if !p.is_file() {
             eprintln!("Error: Not a file: {}", p.display());
@@ -34,17 +47,19 @@ pub fn main() -> anyhow::Result<()> {
         paths.push(p);
     }
     let count = AtomicU64::new(0);
+    let skipped = AtomicU64::new(0);
     crossbeam::scope(|scope| {
         for p in paths {
             let target_dir = target_dir.clone();
             let p = PathBuf::from(p);
             let count = &count;
+            let skipped = &skipped;
             scope.spawn(move |_| {
                 let f = match File::open(&p) {
                     Ok(f) => f,
                     Err(e) => {
                         eprintln!("Error: Failed to open file {}: {}", p.display(), e);
-                        return;
+                        std::process::exit(1);
                     }
                 };
                 let f = BufReader::new(f);
@@ -60,23 +75,42 @@ pub fn main() -> anyhow::Result<()> {
                                 }
                                 Ok(name) => name,
                             };
-                            let target_file = target_dir.join(name.replace("/", "__"));
+                            let target_file = target_dir.join(
+                                name.replace("/", "__")
+                                    .replace(":", "__colon__")
+                                    .replace("*", "__star__"),
+                            );
+                            if skip_existing && target_file.is_file() {
+                                let i = skipped.fetch_add(1, Ordering::SeqCst);
+                                if i % 500 == 0 {
+                                    eprintln!("Skipped {} files", i);
+                                }
+                                continue 'streamLoop;
+                            }
                             match std::fs::write(&target_file, article.body.html.as_bytes()) {
                                 Ok(()) => {
                                     let i = count.fetch_add(1, Ordering::SeqCst);
                                     if i % 100 == 0 {
                                         eprintln!("Processed {} files", i);
                                         if i % 500 == 0 {
-                                            eprintln!("Just did {:?} to {}", article.name, target_file.display());
+                                            eprintln!(
+                                                "Just did {:?} to {}",
+                                                article.name,
+                                                target_file.display()
+                                            );
                                         }
                                     }
-                                },
+                                }
                                 Err(e) => {
-                                    eprintln!("ERROR: Failed to write to {}: {}", target_file.display(), e);
+                                    eprintln!(
+                                        "ERROR: Failed to write to {}: {}",
+                                        target_file.display(),
+                                        e
+                                    );
                                     continue 'streamLoop;
                                 }
                             }
-                        },
+                        }
                         Err(e) => {
                             eprintln!("ERROR: Failed to read from {}: {}", p.display(), e);
                             continue 'streamLoop;
@@ -85,18 +119,15 @@ pub fn main() -> anyhow::Result<()> {
                 }
             });
         }
-    }).unwrap();
+    })
+    .unwrap();
     Ok(())
 }
 
 fn parse_url(url: &str) -> Result<String, String> {
-    const PREFIX: &'static str = "/wiki/"; 
+    const PREFIX: &'static str = "/wiki/";
     match url.find(PREFIX) {
-        None => {
-            Err(format!("No `/wiki/` in {:?}", url))
-        },
-        Some(idx) => {
-            Ok(format!("{}.html", &url[idx + PREFIX.len()..]))
-        }
+        None => Err(format!("No `/wiki/` in {:?}", url)),
+        Some(idx) => Ok(format!("{}.html", &url[idx + PREFIX.len()..])),
     }
-} 
+}
