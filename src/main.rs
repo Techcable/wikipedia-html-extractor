@@ -1,10 +1,41 @@
-use serde::Deserialize;
-use serde_json::StreamDeserializer;
-use std::env;
 use std::fs::File;
 use std::io::BufReader;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
+
+use clap::{Args, Parser, Subcommand};
+use serde::Deserialize;
+use serde_json::StreamDeserializer;
+
+#[derive(Parser, Debug)]
+#[clap(author, version)]
+#[clap(about = "Commands to manipulate and analyse wikipedia HTML dumps")]
+#[clap(propagate_version = true)]
+struct Cli {
+    #[clap(subcommand)]
+    command: Command,
+}
+
+#[derive(Subcommand, Debug)]
+enum Command {
+    Extract(ExtractCommand),
+}
+
+#[derive(Debug, Args)]
+struct ExtractCommand {
+    /// Output verbose information (print every file extracted)
+    #[clap(long)]
+    verbose: bool,
+    /// Skip existing files
+    #[clap(long)]
+    skip_existing: bool,
+    /// The target directory to extract files into
+    #[clap(long = "out", parse(from_os_str))]
+    output_dir: Option<PathBuf>,
+    /// The target files to extract
+    #[clap(required = true, parse(from_os_str))]
+    targets: Vec<PathBuf>,
+}
 
 #[derive(Debug, Deserialize)]
 struct ArticleEntry {
@@ -20,36 +51,29 @@ struct ArticleBody {
 }
 
 pub fn main() -> anyhow::Result<()> {
-    let target_dir = PathBuf::from("extracted");
+    let cli = Cli::parse();
+    match cli.command {
+        Command::Extract(cmd) => extract(cmd)?,
+    }
+    Ok(())
+}
+
+fn extract(command: ExtractCommand) -> anyhow::Result<()> {
+    let target_dir = command
+        .output_dir
+        .clone()
+        .unwrap_or_else(|| PathBuf::from("extracted"));
     if !target_dir.is_dir() {
         std::fs::create_dir(&target_dir)?;
     }
-    let mut paths = Vec::new();
-    let mut skip_existing = false;
-    let mut verbose = false;
-    for arg in env::args().skip(1) {
-        if arg.starts_with("--") {
-            match &*arg {
-                "--skip-existing" => {
-                    skip_existing = true;
-                    continue;
-                }
-                "--verbose" => {
-                    verbose = true;
-                    continue;
-                }
-                _ => {
-                    eprintln!("Unknown option: {:?}", arg);
-                    std::process::exit(1);
-                }
-            }
-        }
-        let p = PathBuf::from(arg);
+    let paths = command.targets;
+    let skip_existing = command.skip_existing;
+    let verbose = command.verbose;
+    for p in &paths {
         if !p.is_file() {
             eprintln!("Error: Not a file: {}", p.display());
             std::process::exit(1);
         }
-        paths.push(p);
     }
     let count = AtomicU64::new(0);
     let skipped = AtomicU64::new(0);
