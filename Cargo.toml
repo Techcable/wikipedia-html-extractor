@@ -12,7 +12,3 @@ crossbeam = "0.8"
 anyhow = "1"
 # CLI
 clap = { version = "3.1", features = ["derive", "cargo"] }
-
-[[bin]]
-name = "ensure-nested"
-path = "src/main/ensure_nested.rs"

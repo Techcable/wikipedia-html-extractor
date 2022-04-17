@@ -3,26 +3,20 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
-pub fn main() {
-    let mut args = std::env::args().skip(1);
-    let target_dir = PathBuf::from(match args.next() {
-        Some(val) => val,
-        None => {
-            eprintln!("ERROR: Please specify a directory to convert");
-            std::process::exit(1);
-        }
-    });
-    if args.next().is_some() {
-        eprintln!("ERROR: Please only specify 1 argument");
-        std::process::exit(1);
-    }
-    let iterdir = match std::fs::read_dir(&target_dir) {
-        Err(e) => {
-            eprintln!("Unable to read directory {}: {}", target_dir.display(), e);
-            std::process::exit(1);
-        }
-        Ok(iter) => iter,
-    };
+use anyhow::anyhow;
+use clap::Args;
+
+#[derive(Debug, Args)]
+pub struct EnsureNested {
+    /// The target directory to convert
+    #[clap(required = true, parse(from_os_str))]
+    target_dir: PathBuf,
+}
+
+pub fn main(cmd: EnsureNested) -> anyhow::Result<()> {
+    let target_dir = cmd.target_dir;
+    let iterdir = std::fs::read_dir(&target_dir)
+        .map_err(|e| anyhow!("Unable to read directory {}: {}", target_dir.display(), e))?;
     let counter = Arc::new(AtomicU64::new(0));
     let existing_dirs = Arc::new(Mutex::new(HashSet::<PathBuf>::new()));
     let (sender, receiver) = crossbeam::channel::bounded::<PathBuf>(500);
@@ -68,6 +62,7 @@ pub fn main() {
     for handle in handles {
         handle.join().unwrap();
     }
+    Ok(())
 }
 
 fn process_file(
