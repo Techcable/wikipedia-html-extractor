@@ -58,7 +58,6 @@ pub fn extract(command: ExtractCommand) -> anyhow::Result<()> {
     crossbeam::scope(|scope| {
         for p in paths {
             let target_dir = target_dir.clone();
-            let p = PathBuf::from(p);
             let count = &count;
             let skipped = &skipped;
             scope.spawn(move |_| {
@@ -147,7 +146,7 @@ pub fn extract(command: ExtractCommand) -> anyhow::Result<()> {
 }
 
 fn parse_url(url: &str) -> Result<String, String> {
-    const PREFIX: &'static str = "/wiki/";
+    const PREFIX: &str = "/wiki/";
     match url.find(PREFIX) {
         None => Err(format!("No `/wiki/` in {:?}", url)),
         Some(idx) => Ok(format!("{}.html", &url[idx + PREFIX.len()..])),
@@ -155,7 +154,7 @@ fn parse_url(url: &str) -> Result<String, String> {
 }
 
 pub fn sanitize_name(name: &str) -> String {
-    name.replace("/", "__")
-        .replace(":", "__colon__")
-        .replace("*", "__star__")
+    name.replace('/', "__")
+        .replace(':', "__colon__")
+        .replace('*', "__star__")
 }
