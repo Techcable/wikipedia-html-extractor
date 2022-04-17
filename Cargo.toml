@@ -12,3 +12,6 @@ crossbeam = "0.8"
 anyhow = "1"
 # CLI
 clap = { version = "3.1", features = ["derive", "cargo"] }
+
+[profile.release]
+lto = "thin"
