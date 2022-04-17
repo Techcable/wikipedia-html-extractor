@@ -1,6 +1,8 @@
 use std::fs::File;
 use std::io::{BufReader, BufWriter};
 use std::path::PathBuf;
+use std::sync::Arc;
+use std::sync::atomic::{Ordering, AtomicU64};
 
 use anyhow::{anyhow, Result};
 use clap::Args;
@@ -29,15 +31,18 @@ pub fn main(command: IndexCommand) -> anyhow::Result<()> {
         .clone()
         .unwrap_or_else(|| PathBuf::from("index"));
     std::fs::create_dir_all(&out_dir)?;
+    let count = Arc::new(AtomicU64::new(0));
     let mut handles = Vec::new();
     for target in command.targets {
+        let file_name = target
+                .file_stem()
+                .ok_or_else(|| anyhow!("Expected file name for {}", target.display()))?
+                .to_string_lossy().into_owned();
         let out_file = out_dir.join(format!(
             "{}-index.json",
-            target
-                .file_stem()
-                .ok_or_else(|| { anyhow!("Expected file name for {}", target.display()) })?
-                .to_string_lossy()
+            &file_name
         ));
+        let count = Arc::clone(&count);
         handles.push(std::thread::spawn(handle_errors(move || {
             let f = File::open(&target)
                 .map_err(|e| anyhow!("Failed to open file {}: {}", target.display(), e))?;
@@ -55,7 +60,15 @@ pub fn main(command: IndexCommand) -> anyhow::Result<()> {
                     Ok(value) => {
                         let meta: ArticleMetadata = value;
                         match seq.serialize_element(&meta) {
-                            Ok(()) => {}
+                            Ok(()) => {
+                                let i = count.fetch_add(1, Ordering::SeqCst);
+                                if i % 500 == 0 {
+                                    eprintln!("Indexed {} articles", i);
+                                }
+                                if i % 5000 == 0 {
+                                    eprintln!("Indexed {} in {}", &meta.name, &file_name)
+                                }
+                            }
                             Err(e) => {
                                 eprintln!(
                                     "WARNING: Failed to write to {}: {}",
@@ -81,6 +94,7 @@ pub fn main(command: IndexCommand) -> anyhow::Result<()> {
             .join()
             .map_err(|_e| anyhow!("Failed to run thread"))?;
     }
+    eprintln!("Indexed total of {} articles", count.load(Ordering::SeqCst));
     Ok(())
 }
 
