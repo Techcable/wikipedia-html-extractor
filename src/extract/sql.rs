@@ -21,8 +21,9 @@ pub struct ExtractSqlCommand {
     /// The output database
     #[clap(long = "out", required = true, parse(from_os_str))]
     output: PathBuf,
-    #[clap(flatten)]
-    basic: super::BasicExtractCommand,
+    /// The target files to extract
+    #[clap(required = true, parse(from_os_str))]
+    targets: Vec<PathBuf>,
 }
 struct SqlExtractListener {
     command: ExtractSqlCommand,
@@ -70,7 +71,7 @@ impl super::ExtractListener for SqlExtractListener {
         Ok(())
     }
 }
-pub fn extract(mut command: ExtractSqlCommand) -> anyhow::Result<()> {
+pub fn extract(command: ExtractSqlCommand) -> anyhow::Result<()> {
     let target = command.output.clone();
     if !target.is_file() {
         let connection = rusqlite::Connection::open_with_flags(
@@ -92,13 +93,13 @@ pub fn extract(mut command: ExtractSqlCommand) -> anyhow::Result<()> {
         )?;
         connection.close().map_err(|(_, err)| err)?;
     }
-    let basic_command = std::mem::replace(&mut command.basic, Default::default());
+    let paths = command.targets.clone();
     let listener = SqlExtractListener {
         command,
         connection: ThreadLocal::new(),
         target_db: target,
     };
-    let mut task = super::extract(basic_command, Box::new(listener))?;
+    let mut task = super::extract_threaded(paths, Box::new(listener))?;
     match task.wait() {
         Ok(()) => {}
         Err(ExtractError::Listener(ref e)) if e.is::<CancelledError>() => {}

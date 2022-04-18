@@ -13,6 +13,9 @@ struct CancelledError;
 
 #[derive(Debug, Args)]
 pub struct ExtractCommand {
+    /// Output verbose information (print every file extracted)
+    #[clap(long)]
+    verbose: bool,
     /// The limit on the number of files to extract
     #[clap(long)]
     limit: Option<u64>,
@@ -25,8 +28,9 @@ pub struct ExtractCommand {
     /// The target directory to extract files into
     #[clap(long = "out", parse(from_os_str))]
     output_dir: Option<PathBuf>,
-    #[clap(flatten)]
-    basic: super::BasicExtractCommand,
+    /// The target files to extract
+    #[clap(required = true, parse(from_os_str))]
+    targets: Vec<PathBuf>,
 }
 struct FileExtractListener {
     command: ExtractCommand,
@@ -78,7 +82,7 @@ impl super::ExtractListener for FileExtractListener {
         }
         match std::fs::write(&target_file, event.article.body.html.as_bytes()) {
             Ok(()) => {
-                event.basic_report_progress();
+                event.basic_report_progress(self.command.verbose);
                 Ok(())
             }
             Err(e) => {
@@ -97,7 +101,7 @@ impl super::ExtractListener for FileExtractListener {
         Ok(())
     }
 }
-pub fn extract(mut command: ExtractCommand) -> anyhow::Result<()> {
+pub fn extract(command: ExtractCommand) -> anyhow::Result<()> {
     eprintln!("WARNING: This command is deprecated. It overloads the FS");
     eprintln!("Consider using the new `extract` command (uses SQLite)");
     let target_dir = command
@@ -107,13 +111,13 @@ pub fn extract(mut command: ExtractCommand) -> anyhow::Result<()> {
     if !target_dir.is_dir() {
         std::fs::create_dir(&target_dir)?;
     }
-    let basic_command = std::mem::replace(&mut command.basic, Default::default());
+    let paths = command.targets.clone();
     let listener = FileExtractListener {
         command,
         skipped: AtomicU64::new(0),
         target_dir,
     };
-    let mut task = super::extract(basic_command, Box::new(listener))?;
+    let mut task = super::extract_threaded(paths, Box::new(listener))?;
     match task.wait() {
         Ok(()) => {}
         Err(ExtractError::Listener(ref e)) if e.is::<CancelledError>() => {}
