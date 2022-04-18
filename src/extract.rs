@@ -9,6 +9,7 @@ use serde::Deserialize;
 use serde_json::StreamDeserializer;
 
 pub mod files;
+pub mod sql;
 
 #[derive(Debug, Args, Default)]
 pub struct BasicExtractCommand {
@@ -45,13 +46,14 @@ impl ExtractState {
         let stream: StreamDeserializer<_, Article> =
             serde_json::de::Deserializer::from_reader(f).into_iter();
         for value in stream {
+            let listener = self.listener.as_ref().unwrap();
             if self.should_stop.load(Ordering::SeqCst) {
                 return Ok(());
             }
             match value {
                 Ok(article) => {
                     let count = self.count.fetch_add(1, Ordering::SeqCst);
-                    self.listener
+                    listener
                         .on_parse(ParseEvent {
                             original_file: &target,
                             count,
@@ -61,7 +63,7 @@ impl ExtractState {
                         .map_err(ExtractError::Listener)?;
                 }
                 Err(cause) => {
-                    self.listener
+                    listener
                         .on_parse_error(&target, cause.into())
                         .map_err(ExtractError::Listener)?;
                     continue;

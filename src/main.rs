@@ -17,6 +17,7 @@ struct Cli {
 enum Command {
     ExtractFiles(extract::files::ExtractCommand),
     EnsureNested(ensure_nested::EnsureNested),
+    Extract(extract::sql::ExtractSqlCommand),
     Index(index::IndexCommand),
 }
 
@@ -25,6 +26,7 @@ pub fn main() -> anyhow::Result<()> {
     match cli.command {
         Command::ExtractFiles(cmd) => extract::files::extract(cmd),
         Command::EnsureNested(cmd) => ensure_nested::main(cmd),
+        Command::Extract(cmd) => extract::sql::extract(cmd),
         Command::Index(cmd) => index::main(cmd),
     }
 }
