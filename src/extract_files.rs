@@ -15,6 +15,12 @@ pub struct ExtractCommand {
     /// Skip existing files
     #[clap(long)]
     skip_existing: bool,
+    /// Do not nest the extracted files
+    #[clap(long)]
+    no_nesting: bool,
+    /// The limit on the number of files to extract
+    #[clap(long)]
+    limit: Option<u64>,
     /// The target directory to extract files into
     #[clap(long = "out", parse(from_os_str))]
     output_dir: Option<PathBuf>,
@@ -44,9 +50,7 @@ pub fn extract(command: ExtractCommand) -> anyhow::Result<()> {
     if !target_dir.is_dir() {
         std::fs::create_dir(&target_dir)?;
     }
-    let paths = command.targets;
-    let skip_existing = command.skip_existing;
-    let verbose = command.verbose;
+    let paths = command.targets.clone();
     for p in &paths {
         if !p.is_file() {
             eprintln!("Error: Not a file: {}", p.display());
@@ -60,6 +64,7 @@ pub fn extract(command: ExtractCommand) -> anyhow::Result<()> {
             let target_dir = target_dir.clone();
             let count = &count;
             let skipped = &skipped;
+            let command = &command;
             scope.spawn(move |_| {
                 let f = match File::open(&p) {
                     Ok(f) => f,
@@ -72,6 +77,11 @@ pub fn extract(command: ExtractCommand) -> anyhow::Result<()> {
                 let stream: StreamDeserializer<_, ArticleEntry> =
                     serde_json::de::Deserializer::from_reader(f).into_iter();
                 'streamLoop: for value in stream {
+                    if let Some(limit) = command.limit {
+                        if count.load(Ordering::SeqCst) >= limit {
+                            return;
+                        }
+                    }
                     match value {
                         Ok(article) => {
                             let name = match parse_url(&article.url) {
@@ -83,25 +93,27 @@ pub fn extract(command: ExtractCommand) -> anyhow::Result<()> {
                             };
                             let mut target_file = PathBuf::clone(&target_dir);
                             let mut chars = name.chars();
-                            if let Some(first) = chars.next() {
-                                target_file.push(String::from(first));
-                                if let Some(second) = chars.next() {
-                                    target_file.push(String::from(second));
+                            if !command.no_nesting {
+                                if let Some(first) = chars.next() {
+                                    target_file.push(String::from(first));
+                                    if let Some(second) = chars.next() {
+                                        target_file.push(String::from(second));
+                                    }
                                 }
-                            }
-                            match std::fs::create_dir_all(&target_file) {
-                                Ok(()) => {}
-                                Err(e) => {
-                                    eprintln!(
-                                        "WARNING: Unable to create directory {}: {}",
-                                        target_file.display(),
-                                        e
-                                    );
-                                    continue 'streamLoop;
+                                match std::fs::create_dir_all(&target_file) {
+                                    Ok(()) => {}
+                                    Err(e) => {
+                                        eprintln!(
+                                            "WARNING: Unable to create directory {}: {}",
+                                            target_file.display(),
+                                            e
+                                        );
+                                        continue 'streamLoop;
+                                    }
                                 }
                             }
                             target_file.push(name);
-                            if skip_existing && target_file.is_file() {
+                            if command.skip_existing && target_file.is_file() {
                                 let i = skipped.fetch_add(1, Ordering::SeqCst);
                                 if i % 500 == 0 {
                                     eprintln!("Skipped {} files", i);
@@ -114,7 +126,7 @@ pub fn extract(command: ExtractCommand) -> anyhow::Result<()> {
                                     if i % 100 == 0 {
                                         eprintln!("Processed {} files", i);
                                     }
-                                    if i % 500 == 0 || verbose {
+                                    if i % 500 == 0 || command.verbose {
                                         eprintln!(
                                             "Extracted {:?} to {}",
                                             article.name,
