@@ -89,6 +89,11 @@ pub fn extract(command: ExtractSqlCommand) -> anyhow::Result<()> {
         &target,
         rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE,
     )?;
+    connection.execute_batch(
+        "
+        PRAGMA journal_mode = WAL;
+    ",
+    )?;
     let listener = SqlExtractListener {
         connection: RefCell::new(connection),
         skipped: AtomicU64::new(0),
