@@ -87,7 +87,7 @@ impl super::ExtractListener for FileExtractListener {
             }
             Err(e) => {
                 eprintln!("ERROR: Failed to write to {}: {}", target_file.display(), e);
-                return Ok(());
+                Ok(())
             }
         }
     }

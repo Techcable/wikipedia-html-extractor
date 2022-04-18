@@ -4,22 +4,26 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 
-use clap::Args;
 use serde::Deserialize;
 use serde_json::StreamDeserializer;
 
 pub mod files;
 pub mod sql;
 
-pub struct ExtractState {
+pub struct ExtractState<L: ?Sized + ExtractListener> {
     count: AtomicU64,
     should_stop: AtomicBool,
     error: Mutex<Option<ExtractError>>,
     error_cond: Condvar,
-    pub listener: Box<dyn ExtractListener>,
+    pub listener: Box<L>,
 }
-impl ExtractState {
-    pub fn new(listener: Box<dyn ExtractListener>) -> ExtractState {
+impl<L: ?Sized + ExtractListener> ExtractState<L> {
+    /// Get a count of the number of items that have been extracted
+    #[inline]
+    pub fn count(&self) -> u64 {
+        self.count.load(Ordering::SeqCst)
+    }
+    pub fn new(listener: Box<L>) -> Self {
         ExtractState {
             count: AtomicU64::new(0),
             should_stop: AtomicBool::new(false),
@@ -72,13 +76,13 @@ impl ExtractState {
 
 pub struct ThreadedExtractTask {
     handles: Vec<std::thread::JoinHandle<()>>,
-    pub state: Arc<ExtractState>,
+    pub state: Arc<ExtractState<dyn ExtractListener + Send + Sync + 'static>>,
 }
 impl ThreadedExtractTask {
     /// Get a count of the number of items that had been extracted
     #[inline]
     pub fn count(&self) -> u64 {
-        self.state.count.load(Ordering::SeqCst)
+        self.state.count()
     }
     #[inline]
     pub fn is_finished(&self) -> bool {
@@ -116,7 +120,7 @@ pub enum ExtractError {
     Listener(anyhow::Error),
 }
 
-pub trait ExtractListener: Send + Sync + 'static {
+pub trait ExtractListener {
     fn on_parse(&self, event: ParseEvent) -> Result<(), anyhow::Error>;
     fn on_parse_error(
         &self,
@@ -127,7 +131,7 @@ pub trait ExtractListener: Send + Sync + 'static {
 
 pub fn extract_threaded(
     paths: Vec<PathBuf>,
-    listener: Box<dyn ExtractListener>,
+    listener: Box<dyn ExtractListener + Send + Sync + 'static>,
 ) -> Result<ThreadedExtractTask, ExtractError> {
     let state = Arc::new(ExtractState::new(listener));
     let mut task = ThreadedExtractTask {

@@ -1,13 +1,8 @@
 use clap::Args;
 use std::cell::RefCell;
-use std::sync::Weak as ArcWeak;
-use std::{
-    path::PathBuf,
-    sync::atomic::{AtomicU64, Ordering},
-};
-use thread_local::ThreadLocal;
+use std::path::PathBuf;
 
-use crate::extract::ExtractError;
+use super::ExtractState;
 
 #[derive(Debug, thiserror::Error)]
 #[error("Cancelled extract")]
@@ -26,28 +21,18 @@ pub struct ExtractSqlCommand {
     targets: Vec<PathBuf>,
 }
 struct SqlExtractListener {
-    command: ExtractSqlCommand,
-    target_db: PathBuf,
-    connection: ThreadLocal<RefCell<rusqlite::Connection>>,
+    connection: RefCell<rusqlite::Connection>,
 }
 
 impl super::ExtractListener for SqlExtractListener {
     fn on_parse(&self, event: super::ParseEvent) -> Result<(), anyhow::Error> {
-        let conn = self.connection.get_or_try::<_, anyhow::Error>(|| {
-            let conn = rusqlite::Connection::open_with_flags(
-                self.target_db.clone(),
-                rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE,
-            )?;
-            conn.execute("PRAGMA foreign_keys = ON;", [])?;
-            Ok(RefCell::new(conn))
-        })?;
-        let mut conn = conn.borrow_mut();
+        let mut conn = self.connection.borrow_mut();
         let raw_html = event.article.body.html.as_bytes();
         let compressed = zstd::encode_all(raw_html, /* level */ 1)?;
         let tx = conn.transaction()?;
         match tx.execute(
-            "INSERT INTO article(name, url, compressed_html) VALUES (?1, ?2, ?3);",
-            rusqlite::params![&event.article.name, &event.article.url, &compressed],
+            "INSERT INTO article(name, url) VALUES (?1, ?2);",
+            rusqlite::params![&event.article.name, &event.article.url],
         ) {
             Ok(_) => {}
             Err(rusqlite::Error::SqliteFailure(cause, _))
@@ -58,6 +43,10 @@ impl super::ExtractListener for SqlExtractListener {
             }
             Err(cause) => return Err(cause.into()),
         }
+        tx.execute(
+            "INSERT INTO article_body(name, compressed_html) VALUES(?1, ?2)",
+            rusqlite::params![event.article.name, &compressed],
+        )?;
         tx.commit()?;
         Ok(())
     }
@@ -78,7 +67,7 @@ pub fn extract(command: ExtractSqlCommand) -> anyhow::Result<()> {
             target.clone(),
             rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE | rusqlite::OpenFlags::SQLITE_OPEN_CREATE,
         )?;
-        connection.execute(
+        connection.execute_batch(
             "
             CREATE TABLE article_body(
                 name VARCHAR(255) PRIMARY KEY NOT NULL,
@@ -89,37 +78,24 @@ pub fn extract(command: ExtractSqlCommand) -> anyhow::Result<()> {
                 url VARCHAR(255) NOT NULL
             );
         ",
-            [],
         )?;
         connection.close().map_err(|(_, err)| err)?;
     }
-    let paths = command.targets.clone();
+    let connection = rusqlite::Connection::open_with_flags(
+        &target,
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE,
+    )?;
     let listener = SqlExtractListener {
-        command,
-        connection: ThreadLocal::new(),
-        target_db: target,
+        connection: RefCell::new(connection),
     };
-    let mut task = super::extract_threaded(paths, Box::new(listener))?;
-    match task.wait() {
-        Ok(()) => {}
-        Err(ExtractError::Listener(ref e)) if e.is::<CancelledError>() => {}
-        Err(cause) => return Err(cause.into()),
+    let state = ExtractState::new(Box::new(listener));
+    for target in &command.targets {
+        eprintln!("Processing {}", target.display());
+        state.run_extract(target.clone())?;
     }
-    assert!(task.is_finished());
-    eprintln!("Extracted {} files", task.count());
+    eprintln!("Extracted {} files", state.count());
+    let listener = *state.listener;
+    let connection = RefCell::into_inner(listener.connection);
+    connection.close().map_err(|(_, e)| e)?;
     Ok(())
-}
-
-fn parse_url(url: &str) -> Result<String, String> {
-    const PREFIX: &str = "/wiki/";
-    match url.find(PREFIX) {
-        None => Err(format!("No `/wiki/` in {:?}", url)),
-        Some(idx) => Ok(format!("{}.html", &url[idx + PREFIX.len()..])),
-    }
-}
-
-pub fn sanitize_name(name: &str) -> String {
-    name.replace('/', "__")
-        .replace(':', "__colon__")
-        .replace('*', "__star__")
 }
