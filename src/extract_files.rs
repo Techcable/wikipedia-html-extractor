@@ -43,6 +43,8 @@ struct ArticleBody {
 }
 
 pub fn extract(command: ExtractCommand) -> anyhow::Result<()> {
+    eprintln!("WARNING: This command is deprecated. It overloads the FS");
+    eprintln!("Consider using the new `extract` command (uses SQLite)");
     let target_dir = command
         .output_dir
         .clone()
