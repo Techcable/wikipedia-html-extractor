@@ -1,11 +1,11 @@
+use clap::Args;
+use std::cell::RefCell;
+use std::sync::Weak as ArcWeak;
 use std::{
     path::PathBuf,
     sync::atomic::{AtomicU64, Ordering},
 };
-use std::sync::Weak as ArcWeak;
-use std::cell::RefCell;
 use thread_local::ThreadLocal;
-use clap::Args;
 
 use crate::extract::ExtractError;
 
@@ -27,7 +27,7 @@ pub struct ExtractSqlCommand {
 struct SqlExtractListener {
     command: ExtractSqlCommand,
     target_db: PathBuf,
-    connection: ThreadLocal<RefCell<rusqlite::Connection>>
+    connection: ThreadLocal<RefCell<rusqlite::Connection>>,
 }
 
 impl super::ExtractListener for SqlExtractListener {
@@ -35,7 +35,7 @@ impl super::ExtractListener for SqlExtractListener {
         let conn = self.connection.get_or_try::<_, anyhow::Error>(|| {
             let conn = rusqlite::Connection::open_with_flags(
                 self.target_db.clone(),
-                rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE
+                rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE,
             )?;
             conn.execute("PRAGMA foreign_keys = ON;", [])?;
             Ok(RefCell::new(conn))
@@ -46,15 +46,16 @@ impl super::ExtractListener for SqlExtractListener {
         let tx = conn.transaction()?;
         match tx.execute(
             "INSERT INTO article(name, url, compressed_html) VALUES (?1, ?2, ?3);",
-            rusqlite::params![&event.article.name, &event.article.url, &compressed]
+            rusqlite::params![&event.article.name, &event.article.url, &compressed],
         ) {
-            Ok(_) => {},
+            Ok(_) => {}
             Err(rusqlite::Error::SqliteFailure(cause, _))
-                if cause.code == rusqlite::ffi::ErrorCode::ConstraintViolation => {
+                if cause.code == rusqlite::ffi::ErrorCode::ConstraintViolation =>
+            {
                 // Article already exists, just ignore
-                return Ok(())
-            },
-            Err(cause) => return Err(cause.into())
+                return Ok(());
+            }
+            Err(cause) => return Err(cause.into()),
         }
         tx.commit()?;
         Ok(())
@@ -74,16 +75,21 @@ pub fn extract(mut command: ExtractSqlCommand) -> anyhow::Result<()> {
     if !target.is_file() {
         let connection = rusqlite::Connection::open_with_flags(
             target.clone(),
-            rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE |
-            rusqlite::OpenFlags::SQLITE_OPEN_CREATE
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE | rusqlite::OpenFlags::SQLITE_OPEN_CREATE,
         )?;
-        connection.execute("
-            CREATE TABLE article(
+        connection.execute(
+            "
+            CREATE TABLE article_body(
                 name VARCHAR(255) PRIMARY KEY NOT NULL,
-                url VARCHAR(255) NOT NULL,
                 compressed_html BLOB
             );
-        ", [])?;
+            CREATE TABLE article(
+                name VARCHAR(255) PRIMARY KEY NOT NULL,
+                url VARCHAR(255) NOT NULL
+            );
+        ",
+            [],
+        )?;
         connection.close().map_err(|(_, err)| err)?;
     }
     let basic_command = std::mem::replace(&mut command.basic, Default::default());
