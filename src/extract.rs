@@ -10,26 +10,24 @@ use serde_json::StreamDeserializer;
 pub mod files;
 pub mod sql;
 
-pub struct ExtractState<L: ?Sized + ExtractListener> {
+pub struct ExtractState {
     count: AtomicU64,
     should_stop: AtomicBool,
     error: Mutex<Option<ExtractError>>,
     error_cond: Condvar,
-    pub listener: Box<L>,
 }
-impl<L: ?Sized + ExtractListener> ExtractState<L> {
+impl ExtractState {
     /// Get a count of the number of items that have been extracted
     #[inline]
     pub fn count(&self) -> u64 {
         self.count.load(Ordering::SeqCst)
     }
-    pub fn new(listener: Box<L>) -> Self {
+    pub fn new() -> Self {
         ExtractState {
             count: AtomicU64::new(0),
             should_stop: AtomicBool::new(false),
             error: Mutex::new(None),
             error_cond: Condvar::new(),
-            listener,
         }
     }
     fn provide_error(&self, error: ExtractError) {
@@ -39,7 +37,11 @@ impl<L: ?Sized + ExtractListener> ExtractState<L> {
         }
         self.error_cond.notify_all();
     }
-    pub fn run_extract(&self, target: PathBuf) -> Result<(), ExtractError> {
+    pub fn run_extract(
+        &self,
+        target: PathBuf,
+        listener: &dyn ExtractListener,
+    ) -> Result<(), ExtractError> {
         let f = File::open(&target).map_err(|cause| ExtractError::FileIo {
             target: target.clone(),
             cause,
@@ -54,7 +56,7 @@ impl<L: ?Sized + ExtractListener> ExtractState<L> {
             match value {
                 Ok(article) => {
                     let count = self.count.fetch_add(1, Ordering::SeqCst);
-                    self.listener
+                    listener
                         .on_parse(ParseEvent {
                             original_file: &target,
                             count,
@@ -63,7 +65,7 @@ impl<L: ?Sized + ExtractListener> ExtractState<L> {
                         .map_err(ExtractError::Listener)?;
                 }
                 Err(cause) => {
-                    self.listener
+                    listener
                         .on_parse_error(&target, cause.into())
                         .map_err(ExtractError::Listener)?;
                     continue;
@@ -76,7 +78,8 @@ impl<L: ?Sized + ExtractListener> ExtractState<L> {
 
 pub struct ThreadedExtractTask {
     handles: Vec<std::thread::JoinHandle<()>>,
-    pub state: Arc<ExtractState<dyn ExtractListener + Send + Sync + 'static>>,
+    pub state: Arc<ExtractState>,
+    pub listener: Arc<dyn ExtractListener + Send + Sync + 'static>,
 }
 impl ThreadedExtractTask {
     /// Get a count of the number of items that had been extracted
@@ -133,17 +136,19 @@ pub fn extract_threaded(
     paths: Vec<PathBuf>,
     listener: Box<dyn ExtractListener + Send + Sync + 'static>,
 ) -> Result<ThreadedExtractTask, ExtractError> {
-    let state = Arc::new(ExtractState::new(listener));
+    let state = Arc::new(ExtractState::new());
     let mut task = ThreadedExtractTask {
         handles: Vec::new(),
         state: Arc::clone(&state),
+        listener: Arc::from(listener),
     };
     for target in paths {
         if !target.is_file() {
             return Err(ExtractError::NotAFile { target });
         }
         let state = Arc::clone(&state);
-        let handle = std::thread::spawn(move || match state.run_extract(target) {
+        let listener = Arc::clone(&task.listener);
+        let handle = std::thread::spawn(move || match state.run_extract(target, &*listener) {
             Err(error) => {
                 state.should_stop.store(true, Ordering::SeqCst);
                 state.provide_error(error);
