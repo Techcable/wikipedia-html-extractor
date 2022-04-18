@@ -1,8 +1,8 @@
 use std::fs::File;
 use std::io::{BufReader, BufWriter};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-use std::sync::atomic::{Ordering, AtomicU64};
 
 use anyhow::{anyhow, Result};
 use clap::Args;
@@ -35,13 +35,11 @@ pub fn main(command: IndexCommand) -> anyhow::Result<()> {
     let mut handles = Vec::new();
     for target in command.targets {
         let file_name = target
-                .file_stem()
-                .ok_or_else(|| anyhow!("Expected file name for {}", target.display()))?
-                .to_string_lossy().into_owned();
-        let out_file = out_dir.join(format!(
-            "{}-index.json",
-            &file_name
-        ));
+            .file_stem()
+            .ok_or_else(|| anyhow!("Expected file name for {}", target.display()))?
+            .to_string_lossy()
+            .into_owned();
+        let out_file = out_dir.join(format!("{}-index.json", &file_name));
         let count = Arc::clone(&count);
         handles.push(std::thread::spawn(handle_errors(move || {
             let f = File::open(&target)

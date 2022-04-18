@@ -1,7 +1,7 @@
 use clap::{Parser, Subcommand};
 
 mod ensure_nested;
-mod extract;
+mod extract_files;
 mod index;
 
 #[derive(Parser, Debug)]
@@ -15,7 +15,7 @@ struct Cli {
 
 #[derive(Subcommand, Debug)]
 enum Command {
-    Extract(extract::ExtractCommand),
+    ExtractFiles(extract_files::ExtractCommand),
     EnsureNested(ensure_nested::EnsureNested),
     Index(index::IndexCommand),
 }
@@ -23,7 +23,7 @@ enum Command {
 pub fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
     match cli.command {
-        Command::Extract(cmd) => extract::extract(cmd),
+        Command::ExtractFiles(cmd) => extract_files::extract(cmd),
         Command::EnsureNested(cmd) => ensure_nested::main(cmd),
         Command::Index(cmd) => index::main(cmd),
     }
