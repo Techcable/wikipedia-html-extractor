@@ -1,6 +1,7 @@
 use clap::Args;
 use std::cell::RefCell;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use super::ExtractState;
 
@@ -10,9 +11,6 @@ struct CancelledError;
 
 #[derive(Debug, Args)]
 pub struct ExtractSqlCommand {
-    /// Skip existing articles
-    #[clap(long)]
-    skip_existing: bool,
     /// The output database
     #[clap(long = "out", required = true, parse(from_os_str))]
     output: PathBuf,
@@ -21,6 +19,7 @@ pub struct ExtractSqlCommand {
     targets: Vec<PathBuf>,
 }
 struct SqlExtractListener {
+    skipped: AtomicU64,
     connection: RefCell<rusqlite::Connection>,
 }
 
@@ -38,6 +37,10 @@ impl super::ExtractListener for SqlExtractListener {
             Err(rusqlite::Error::SqliteFailure(cause, _))
                 if cause.code == rusqlite::ffi::ErrorCode::ConstraintViolation =>
             {
+                let s = self.skipped.fetch_add(1, Ordering::SeqCst);
+                if s % 500 == 0 {
+                    eprintln!("Skipped {} files", s);
+                }
                 // Article already exists, just ignore
                 return Ok(());
             }
@@ -88,6 +91,7 @@ pub fn extract(command: ExtractSqlCommand) -> anyhow::Result<()> {
     )?;
     let listener = SqlExtractListener {
         connection: RefCell::new(connection),
+        skipped: AtomicU64::new(0),
     };
     let state = ExtractState::new(Box::new(listener));
     for target in &command.targets {
