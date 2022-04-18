@@ -82,7 +82,11 @@ impl super::ExtractListener for FileExtractListener {
         }
         match std::fs::write(&target_file, event.article.body.html.as_bytes()) {
             Ok(()) => {
-                event.basic_report_progress(self.command.verbose);
+                super::basic_report_progress(
+                    event.count,
+                    &event.article.name,
+                    self.command.verbose,
+                );
                 Ok(())
             }
             Err(e) => {

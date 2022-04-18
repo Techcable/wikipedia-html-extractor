@@ -173,14 +173,12 @@ pub struct ParseEvent<'a> {
     pub count: u64,
     pub article: Article,
 }
-impl ParseEvent<'_> {
-    pub fn basic_report_progress(&self, verbose: bool) {
-        let count = self.count;
-        if count % 100 == 0 {
-            eprintln!("Processed {} files", count);
-        }
-        if count % 500 == 0 || verbose {
-            eprintln!("Extracted {}", self.article.name,);
-        }
+
+pub fn basic_report_progress(count: u64, article_name: &str, verbose: bool) {
+    if count % 100 == 0 {
+        eprintln!("Processed {} files", count);
+    }
+    if count % 500 == 0 || verbose {
+        eprintln!("Extracted {}", article_name);
     }
 }

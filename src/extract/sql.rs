@@ -51,7 +51,7 @@ impl super::ExtractListener for SqlExtractListener {
             rusqlite::params![event.article.name, &compressed],
         )?;
         tx.commit()?;
-        event.basic_report_progress(/* verbose */ false);
+        super::basic_report_progress(event.count, &event.article.name, false);
         Ok(())
     }
 
