@@ -156,6 +156,7 @@ pub fn extract(command: ExtractSqlCommand) -> anyhow::Result<()> {
                 FOREIGN KEY(article_id) REFERENCES article(id)
             );
             CREATE INDEX article_idx_url ON article(url);
+            CREATE INDEX article_body_idx_article_id ON article_body(article_id);
         ",
         )?;
         connection.close().map_err(|(_, err)| err)?;
