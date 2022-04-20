@@ -155,6 +155,7 @@ pub fn extract(command: ExtractSqlCommand) -> anyhow::Result<()> {
                 compressed_html BLOB,
                 FOREIGN KEY(article_id) REFERENCES article(id)
             );
+            CREATE INDEX article_idx_url ON article(url);
         ",
         )?;
         connection.close().map_err(|(_, err)| err)?;
