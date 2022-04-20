@@ -199,5 +199,10 @@ pub fn extract(command: ExtractSqlCommand) -> anyhow::Result<()> {
             .join()
             .map_err(|_| anyhow!("Unexpected panic in worker thread"))??;
     }
+    eprintln!(
+        "Extracted {} articles from {} different source files",
+        state.count(),
+        command.targets.len()
+    );
     Ok(())
 }
