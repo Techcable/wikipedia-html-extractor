@@ -95,9 +95,18 @@ fn serialize_article(
         }
         Err(cause) => return Err(cause.into()),
     }
+    let article_id = tx.last_insert_rowid();
+    if message.count % 500 == 0 {
+        let actual_article_id = tx.query_row(
+            "SELECT id FROM article WHERE name=?",
+            rusqlite::params![&message.name],
+            |row| row.get::<_, i64>(0),
+        )?;
+        assert_eq!(article_id, actual_article_id);
+    }
     tx.execute(
-        "INSERT INTO article_body(name, compressed_html) VALUES(?1, ?2)",
-        rusqlite::params![message.name, &message.compressed_html],
+        "INSERT INTO article_body(article_id, compressed_html) VALUES(?1, ?2)",
+        rusqlite::params![&article_id, &message.compressed_html],
     )?;
     tx.commit()?;
     super::basic_report_progress(message.count, &message.name, false);
@@ -134,13 +143,17 @@ pub fn extract(command: ExtractSqlCommand) -> anyhow::Result<()> {
         )?;
         connection.execute_batch(
             "
-            CREATE TABLE article_body(
-                name VARCHAR(255) PRIMARY KEY NOT NULL,
-                compressed_html BLOB
-            );
+            PRAGMA foreign_keys = ON;
             CREATE TABLE article(
-                name VARCHAR(255) PRIMARY KEY NOT NULL,
+                id INTEGER PRIMARY KEY,
+                name VARCHAR(255) UNIQUE NOT NULL,
                 url VARCHAR(255) NOT NULL
+            );
+            CREATE TABLE article_body(
+                id INTEGER PRIMARY KEY,
+                article_id INTEGER NOT NULL,
+                compressed_html BLOB,
+                FOREIGN KEY(article_id) REFERENCES article(id)
             );
         ",
         )?;
@@ -152,6 +165,7 @@ pub fn extract(command: ExtractSqlCommand) -> anyhow::Result<()> {
     )?;
     connection.execute_batch(
         "
+        PRAGMA foreign_keys = ON;
         PRAGMA journal_mode = WAL;
     ",
     )?;
