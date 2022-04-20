@@ -7,6 +7,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::thread::JoinHandle;
 
+use super::ExtractError;
 use super::ExtractState;
 
 const ARTICLE_CHANNEL_BOUND: usize = 50;
@@ -22,6 +23,9 @@ pub struct ExtractSqlCommand {
     output: PathBuf,
     #[clap(long = "workers", short = 'j', default_value = "4")]
     workers: u32,
+    /// The limit on the number of articles to extract
+    #[clap(long = "limit")]
+    limit: Option<u64>,
     /// The target files to extract
     #[clap(required = true, parse(from_os_str))]
     targets: Vec<PathBuf>,
@@ -36,10 +40,16 @@ struct SqlArticleMessage {
 
 struct SqlMessageListener {
     article_sender: Sender<SqlArticleMessage>,
+    limit: Option<u64>,
 }
 
 impl super::ExtractListener for SqlMessageListener {
     fn on_parse(&self, event: super::ParseEvent) -> Result<(), anyhow::Error> {
+        if let Some(limit) = self.limit {
+            if event.count > limit {
+                return Err(CancelledError.into());
+            }
+        }
         let raw_html = event.article.body.html.as_bytes();
         let compressed = zstd::encode_all(raw_html, /* level */ 1)?;
         self.article_sender
@@ -97,12 +107,20 @@ fn spawn_worker(
     state: Arc<ExtractState>,
     article_sender: Sender<SqlArticleMessage>,
     path_recev: Receiver<PathBuf>,
+    limit: Option<u64>,
 ) -> JoinHandle<anyhow::Result<()>> {
     std::thread::spawn(move || {
-        let listener = SqlMessageListener { article_sender };
+        let listener = SqlMessageListener {
+            article_sender,
+            limit,
+        };
         while let Ok(target) = path_recev.recv() {
             eprintln!("Processing {}", target.display());
-            state.run_extract(target, &listener)?;
+            match state.run_extract(target, &listener) {
+                Ok(()) => {}
+                Err(ExtractError::Listener(cause)) if cause.is::<CancelledError>() => {} // ignore
+                Err(cause) => return Err(cause.into()),
+            }
         }
         Ok(())
     })
@@ -147,6 +165,7 @@ pub fn extract(command: ExtractSqlCommand) -> anyhow::Result<()> {
             Arc::clone(&state),
             article_sender.clone(),
             path_recev.clone(),
+            command.limit.clone(),
         ))
     }
     drop(article_sender);
